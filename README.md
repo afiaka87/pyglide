@@ -3,9 +3,16 @@ Text-Glided-Diffusion
 > an analog clock hanging on a blue wall
 ![an analog clock hanging on a blue wall](assets/harn.png?raw=true)
 
-> a painting of a tree
-![a painting of a tree](assets/treepainting.png?raw=true)
 
+> a lonely robot in the middle of the field
+![](assets/lonelyrobot.png?raw=true)
+> a lonely robot on hanging out on a cliff
+![](assets/cliffbot.png?raw=true)
+
+> a goose made of paper. paper goose.
+![](assets/goose.png?raw=true)
+> a goose rendered in minecraft. minecraft goose.
+![](assets/goose-mc.png?raw=true)
 
 ## Installation
 
