@@ -13,7 +13,7 @@ You also need to install glide-text2im from openai's repository.
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
-(.venv) git clone git@github.com:openai/glide-text2im.git
+(.venv) git clone https://github.com:openai/glide-text2im.git
 (.venv) cd glide-text2im/
 (.venv) python -m pip install -e
 (.venv) cd ../
