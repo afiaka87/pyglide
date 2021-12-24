@@ -1,5 +1,11 @@
 Text-Glided-Diffusion
 ---
+> an analog clock hanging on a blue wall
+![an analog clock hanging on a blue wall](assets/harn.png?raw=true)
+
+> a painting of a tree
+![a painting of a tree](assets/treepainting.png?raw=true)
+
 
 ## Installation
 
