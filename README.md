@@ -5,7 +5,7 @@ Text-Glided-Diffusion
 
 First clone this repository:
 ```sh
-git clone git@github.com:afiaka87/text-glided-diffusion.git
+git clone https://github.com/afiaka87/text-glided-diffusion.git
 cd text-glided-diffusion
 ```
 
