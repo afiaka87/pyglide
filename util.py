@@ -106,6 +106,7 @@ def run_glide_text2im(
     base_x: int,
     base_y: int,
     _device: th.device,
+    cond_fn: callable = None,
 ):
     """
     Run inference on base model and upsample model.
@@ -145,9 +146,9 @@ def run_glide_text2im(
         (full_batch_size, 3, base_y, base_x),
         device=_device,
         clip_denoised=True,
-        progress=False,
+        progress=True,
         model_kwargs=model_kwargs,
-        cond_fn=None,
+        cond_fn=cond_fn,
     )[:batch_size]
     model.del_cache()
     return samples
@@ -178,10 +179,12 @@ def run_glide_sr_text2im(
     batch_size: int,
     upsample_temp: float = 0.997,
     _device: th.device = th.device("cpu"),
+    sr_x: int = 256,
+    sr_y: int = 256,
 ):
     # Sample from the base model.
     model_up.del_cache()
-    up_shape = (batch_size, 3, options_up["image_size"], options_up["image_size"])
+    up_shape = (batch_size, 3, sr_y, sr_x)
     model_kwargs = prepare_sr_model_kwargs(
         model_up, samples, options_up, batch_size, prompt, _device
     )
@@ -191,9 +194,8 @@ def run_glide_sr_text2im(
         noise=th.randn(up_shape, device=_device) * upsample_temp,
         device=_device,
         clip_denoised=True,
-        progress=False,
+        progress=True,
         model_kwargs=model_kwargs,
-        cond_fn=None,
     )[:batch_size]
     model_up.del_cache()
     return up_samples
