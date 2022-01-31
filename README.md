@@ -1,5 +1,8 @@
 Text-Glided-Diffusion
 ---
+
+<a href="https://replicate.com/afiaka87/pyglide" target="_blank"><img src="https://img.shields.io/static/v1?label=run&message=on replicate.ai&color=green"></a>
+
 > an analog clock hanging on a blue wall
 ![an analog clock hanging on a blue wall](assets/harn.png?raw=true)
 
