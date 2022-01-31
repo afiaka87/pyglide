@@ -1,41 +1,11 @@
-pyglide
----
+# pyglide
 
 <a href="https://replicate.com/afiaka87/pyglide" target="_blank"><img src="https://img.shields.io/static/v1?label=run&message=on replicate.ai&color=green"></a>
 
-> an analog clock hanging on a blue wall
-![an analog clock hanging on a blue wall](assets/harn.png?raw=true)
-
-
 > a lonely robot in the middle of the field
 ![](assets/lonelyrobot.png?raw=true)
-> a lonely robot on hanging out on a cliff
-![](assets/cliffbot.png?raw=true)
 
-> a goose made of paper. paper goose.
-![](assets/goose.png?raw=true)
-> a goose rendered in minecraft. minecraft goose.
-![](assets/goose-mc.png?raw=true)
-
-## Installation
-
-First clone this repository:
-```sh
-git clone https://github.com/afiaka87/text-glided-diffusion.git
-cd text-glided-diffusion
-```
-
-You also need to install glide-text2im from openai's repository.
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-(.venv) python -m pip install -r requirements.txt
-(.venv) git clone https://github.com/openai/glide-text2im.git
-(.venv) cd glide-text2im/
-(.venv) python -m pip install -e .
-(.venv) cd ../
-```
-
+---
 
 ## Usage
 ```sh
@@ -56,6 +26,26 @@ sys     0m8.894s
 ```
 ![](assets/the_beach_at_sunset.png?raw=true)
 
+
+## Installation
+
+First clone this repository:
+```sh
+git clone https://github.com/afiaka87/pyglide.git
+cd text-glided-diffusion
+```
+
+You also need to install glide-text2im from openai's repository.
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+(.venv) python -m pip install -r requirements.txt
+(.venv) git clone https://github.com/openai/glide-text2im.git
+(.venv) cd glide-text2im/
+(.venv) python -m pip install -e .
+(.venv) cd ../
+```
+
 ## Detailed Usage
 ```sh
 usage: tgd.py [-h] --prompt PROMPT [--batch_size BATCH_SIZE] [--guidance_scale GUIDANCE_SCALE] [--base_x BASE_X] [--base_y BASE_Y] [--respace RESPACE] [--prefix PREFIX] [--upsample_temp UPSAMPLE_TEMP]
@@ -71,3 +61,15 @@ optional arguments:
   --prefix PREFIX       Output dir for generations. Will be created if it doesn't exist with subfolders for base and upsampled.
   --upsample_temp       0.0 to 1.0. 1.0 can introduce artifacts, lower can introduce blurriness.
 ```
+
+## Gallery
+
+
+> a lonely robot on hanging out on a cliff
+![](assets/cliffbot.png?raw=true)
+> an analog clock hanging on a blue wall
+![an analog clock hanging on a blue wall](assets/harn.png?raw=true)
+> a goose made of paper. paper goose.
+![](assets/goose.png?raw=true)
+> a goose rendered in minecraft. minecraft goose.
+![](assets/goose-mc.png?raw=true)
