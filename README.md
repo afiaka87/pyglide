@@ -32,7 +32,7 @@ sys     0m8.894s
 First clone this repository:
 ```sh
 git clone https://github.com/afiaka87/pyglide.git
-cd text-glided-diffusion
+cd pyglide
 ```
 
 You also need to install glide-text2im from openai's repository.
