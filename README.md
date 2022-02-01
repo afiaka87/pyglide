@@ -1,6 +1,6 @@
 # pyglide
 
-<a href="https://replicate.com/afiaka87/pyglide" target="_blank"><img src="https://img.shields.io/static/v1?label=run&message=on replicate.ai&color=green"></a>
+<a href="https://replicate.com/afiaka87/pyglide" target="_blank"><img src="https://img.shields.io/static/v1?label=run&message=on replicate.ai&color=green"></a> (see [pyglide-replicate](https://github.com/afiaka87/pyglide-replicate))
 
 > a lonely robot in the middle of the field
 ![](assets/lonelyrobot.png?raw=true)
