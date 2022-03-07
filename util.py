@@ -62,7 +62,7 @@ def glide_kwargs_from_prompt(
     )
 
 
-def glide_model_fn(model, guidance_scale) -> callable:
+def glide_model_fn(model, guidance_scale, cls_guidance_scale=0) -> callable:
     def cfg_model_fn(x_t, ts, **kwargs):
         half = x_t[: len(x_t) // 2]
         combined = th.cat([half, half], dim=0)
@@ -73,7 +73,20 @@ def glide_model_fn(model, guidance_scale) -> callable:
         eps = th.cat([half_eps, half_eps], dim=0)
         return th.cat([eps, rest], dim=1)
 
-    return cfg_model_fn
+    def double_cfg_model_fn(x_t, ts, **kwargs):
+        half = x_t[: len(x_t) // 3]
+        combined = th.cat([half, half], dim=0)
+        model_out = model(combined, ts, **kwargs)
+        eps, rest = model_out[:, :3], model_out[:, 3:]
+        cond_eps, cls_eps, uncond_eps = th.split(eps, len(eps) // 3, dim=0)
+        half_eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
+        half_eps = (uncond_eps + cls_guidance_scale * (cls_eps - uncond_eps)) + guidance_scale * (cond_eps - uncond_eps)
+
+        eps = th.cat([half_eps, half_eps], dim=0)
+        return th.cat([eps, rest], dim=1)
+
+    if cls_guidance_scale > 0: return double_cfg_model_fn
+    else: return cfg_model_fn
 
 
 def run_glide_text2im(
@@ -87,6 +100,7 @@ def run_glide_text2im(
     device: th.device,
     cond_fn: callable = None,
     guidance_scale: float = 0.0,
+    cls_guidance_scale: float = 0.0,
     sample_method: str = "plms",
     input_images: th.Tensor = None,
     upsample_temp: float = 1.0,
@@ -103,7 +117,9 @@ def run_glide_text2im(
     # The base model uses CFG, the upsample model does not.
     if use_super_res: 
         full_batch_size = batch_size
-    else: 
+    elif cls_guidance_scale > 0:
+        full_batch_size = batch_size * 3
+    else:
         full_batch_size = batch_size * 2
 
     if sample_method == "plms": looper = diffusion.plms_sample_loop
@@ -111,10 +127,12 @@ def run_glide_text2im(
     elif sample_method == "ddpm": looper = diffusion.p_sample_loop
     else: raise ValueError("Invalid sample method.")
 
-    custom_model_fn = model if input_images is not None else glide_model_fn(model, guidance_scale)
+    custom_model_fn = model if input_images is not None else glide_model_fn(model, guidance_scale, cls_guidance_scale)
+    noise = th.randn_like(input_images) * upsample_temp if use_super_res else None
     samples = looper(
         custom_model_fn,
         (full_batch_size, 3, side_y, side_x),
+        noise=noise,
         device=device,
         clip_denoised=True,
         progress=True,
