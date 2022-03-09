@@ -142,6 +142,7 @@ def run():
 
     sr_base_x = int(base_x * 4.0)
     sr_base_y = int(base_y * 4.0)
+    print(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}")
 
     if sr:
         cprint(
@@ -154,12 +155,15 @@ def run():
             options=options_up,
             prompt=prompt,
             batch_size=batch_size,
-            device=device,
-            upsample_temp=upsample_temp,
             side_x=sr_base_x,
             side_y=sr_base_y,
+            device=device,
+            cond_fn=None,
+            guidance_scale=guidance_scale,
+            cls_guidance_scale=style_guidance_scale,
             sample_method="ddim",
             input_images=low_res_samples.to(device),
+            upsample_temp=upsample_temp,
         )
         elapsed_time = time.time() - current_time
         cprint(f"SR Elapsed time: {elapsed_time} seconds.", "green")
