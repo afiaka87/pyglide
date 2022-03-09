@@ -11,7 +11,19 @@ from glide_text2im.model_creation import (
     model_and_diffusion_defaults_upsampler,
 )
 
-def init_model(model_path: str, timestep_respacing: str, device: th.device, model_type: str = "base") -> Tuple[th.nn.Module, th.nn.Module, dict]:
+
+def pred_to_pil(pred: th.Tensor) -> Image:
+    scaled = ((pred + 1) * 127.5).round().clamp(0, 255).to(th.uint8).cpu()
+    reshaped = scaled.permute(2, 0, 3, 1).reshape([pred.shape[2], -1, 3])
+    return Image.fromarray(reshaped.numpy())
+
+
+def init_model(
+    model_path: str,
+    timestep_respacing: str,
+    device: th.device,
+    model_type: str = "base",
+) -> Tuple[th.nn.Module, th.nn.Module, dict]:
     has_cuda = device == th.device("cuda")
     if model_type == "base":
         options = model_and_diffusion_defaults()
@@ -63,14 +75,33 @@ def glide_kwargs_from_prompt(
     )
     if len(style_prompt) > 0:
         cls_token = glide_model.tokenizer.encode(style_prompt)
-        cls_tokens, cls_mask = glide_model.tokenizer.padded_tokens_and_mask(cls_token, glide_options["text_ctx"])
+        cls_tokens, cls_mask = glide_model.tokenizer.padded_tokens_and_mask(
+            cls_token, glide_options["text_ctx"]
+        )
         return dict(
-            tokens=th.tensor([tokens] * batch_size + [cls_tokens] * batch_size + [uncond_tokens] * batch_size, device=device),
-            mask=th.tensor([mask] * batch_size + [cls_mask] * batch_size + [uncond_mask] * batch_size, dtype=th.bool, device=device),
+            tokens=th.tensor(
+                [tokens] * batch_size
+                + [cls_tokens] * batch_size
+                + [uncond_tokens] * batch_size,
+                device=device,
+            ),
+            mask=th.tensor(
+                [mask] * batch_size
+                + [cls_mask] * batch_size
+                + [uncond_mask] * batch_size,
+                dtype=th.bool,
+                device=device,
+            ),
         )
     return dict(
-        tokens=th.tensor([tokens] * batch_size + [uncond_tokens] * batch_size, device=device),
-        mask=th.tensor([mask] * batch_size + [uncond_mask] * batch_size, dtype=th.bool, device=device)
+        tokens=th.tensor(
+            [tokens] * batch_size + [uncond_tokens] * batch_size, device=device
+        ),
+        mask=th.tensor(
+            [mask] * batch_size + [uncond_mask] * batch_size,
+            dtype=th.bool,
+            device=device,
+        ),
     )
 
 
@@ -84,7 +115,9 @@ def glide_model_fn(model, guidance_scale) -> callable:
         half_eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
         eps = th.cat([half_eps, half_eps], dim=0)
         return th.cat([eps, rest], dim=1)
+
     return cfg_model_fn
+
 
 def glide_double_cfg_model_fn(model, guidance_scale, cls_guidance_scale=3) -> callable:
     def double_cfg_model_fn(x_t, ts, **kwargs):
@@ -94,10 +127,13 @@ def glide_double_cfg_model_fn(model, guidance_scale, cls_guidance_scale=3) -> ca
         eps, rest = model_out[:, :3], model_out[:, 3:]
         cond_eps, cls_eps, uncond_eps = th.split(eps, len(eps) // 3, dim=0)
         half_eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
-        half_eps = (uncond_eps + cls_guidance_scale * (cls_eps - uncond_eps)) + guidance_scale * (cond_eps - uncond_eps)
+        half_eps = (
+            uncond_eps + cls_guidance_scale * (cls_eps - uncond_eps)
+        ) + guidance_scale * (cond_eps - uncond_eps)
 
         eps = th.cat([half_eps, half_eps, half_eps], dim=0)
         return th.cat([eps, rest], dim=1)
+
     return double_cfg_model_fn
 
 
@@ -124,31 +160,44 @@ def run_glide_text2im(
         "ddim",
         "ddpm",
     ], "Invalid sample method. Must be one of plms, ddim, or ddpm."
-    use_super_res = (input_images is not None)
-    model_kwargs = glide_kwargs_from_prompt(model, options, batch_size, prompt, device, input_images, style_prompt)
-
+    model_kwargs = glide_kwargs_from_prompt(
+        model, options, batch_size, prompt, device, input_images, style_prompt
+    )
     # The base model uses CFG, the upsample model does not.
-    if use_super_res: full_batch_size = batch_size
-    elif len(style_prompt) > 0: full_batch_size = batch_size * 3
-    else: full_batch_size = batch_size * 2
+    noise = None
+    if input_images is not None:
+        full_batch_size = batch_size
+        noise = th.randn(full_batch_size, 3, side_y, side_x, device=device)
+    elif len(style_prompt) > 0:
+        full_batch_size = batch_size * 3
+    else:
+        full_batch_size = batch_size * 2
 
-    if sample_method == "plms": looper = diffusion.plms_sample_loop
-    elif sample_method == "ddim": looper = diffusion.ddim_sample_loop
-    elif sample_method == "ddpm": looper = diffusion.p_sample_loop
-    else: raise ValueError("Invalid sample method.")
+    target_shape = (full_batch_size, 3, side_y, side_x)
+
+    if sample_method == "plms":
+        looper = diffusion.plms_sample_loop
+    elif sample_method == "ddim":
+        looper = diffusion.ddim_sample_loop
+    elif sample_method == "ddpm":
+        looper = diffusion.p_sample_loop
+    else:
+        raise ValueError("Invalid sample method.")
 
     # custom_model_fn = model if input_images is not None else glide_model_fn(model, guidance_scale, cls_guidance_scale)
     custom_model_fn = None
     if input_images is not None:
         custom_model_fn = model
     elif len(style_prompt) > 0:
-        custom_model_fn = glide_double_cfg_model_fn(model, guidance_scale, cls_guidance_scale)
+        custom_model_fn = glide_double_cfg_model_fn(
+            model, guidance_scale, cls_guidance_scale
+        )
     else:
         custom_model_fn = glide_model_fn(model, guidance_scale)
-    noise = th.randn_like(input_images) * upsample_temp if use_super_res else None
+
     samples = looper(
         custom_model_fn,
-        (full_batch_size, 3, side_y, side_x),
+        target_shape,
         noise=noise,
         device=device,
         clip_denoised=True,
@@ -158,6 +207,7 @@ def run_glide_text2im(
     )[:batch_size]
     model.del_cache()
     return samples
+
 
 def caption_to_filename(caption: str) -> str:
     return re.sub(r"[^\w]", "_", caption).lower()[:200]
@@ -171,5 +221,6 @@ def save_images(batch: th.Tensor, caption: str, subdir: str, prefix: str = "outp
     directory = os.path.join(prefix, subdir)
     os.makedirs(directory, exist_ok=True)
     full_path = os.path.join(directory, f"{clean_caption}.png")
+    print(f"Saving image to {full_path}")
     pil_image.save(full_path)
     return full_path
