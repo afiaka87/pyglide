@@ -1,0 +1,8 @@
+Pipfile
+Pipfile.lock
+.venv
+glide_outputs
+.vscode
+run.sh
+workspace.code-workspace
+__pycache__

@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+run.sh
+.vscode/
+workspace.code-workspace
+glide_model_cache
+glide-text2im
+glide_outputs/
