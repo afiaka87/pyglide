@@ -1,2 +1,5 @@
+matplotlib
 numpy
+pyyaml
 termcolor
+torchvision
