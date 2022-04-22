@@ -139,3 +139,5 @@ glide_outputs/
 .cog/ 
 *.pt
 *.png
+wandb/
+tensorboard_logs/
