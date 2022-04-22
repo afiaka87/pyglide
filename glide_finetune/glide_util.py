@@ -1,7 +1,9 @@
 ## glide_util.py
 # Utilities for tokenizing, padding, and batching data and sampling from GLIDE.
 
+from glob import glob
 import os
+from secrets import choice
 from typing import Tuple
 
 import PIL
@@ -19,15 +21,6 @@ from glide_text2im.tokenizer.bpe import Encoder
 
 MODEL_TYPES = ["base", "upsample", "base-inpaint", "upsample-inpaint"]
 
-
-def add_cond_to_uncond(tokenizer, cond_text):
-    cond_tokens = tokenizer.encode(cond_text)
-    uncond_tokens, uncond_mask = tokenizer.padded_tokens_and_mask([], 128)
-    cond_tokens, cond_mask = tokenizer.padded_tokens_and_mask(cond_tokens, 128)
-    cond_tokens = th.tensor(cond_tokens)
-    cond_mask = th.tensor(cond_mask, dtype=th.bool)
-    first_half, _ = th.split(cond_tokens, 2, dim=0)
-    _, last_half = th.split(uncond_tokens, 2, dim=0)
 
 
 def get_uncond_tokens_mask(tokenizer: Encoder):
@@ -107,18 +100,23 @@ def sample(
     prompt="",
     batch_size=1,
     guidance_scale=4,
-    device="cpu",
+    device="cuda",
     prediction_respacing="100",
     upsample_enabled=False,
     upsample_factor=4,
     image_to_upsample='',
-    upsample_temp=0.997,
-    cond_text="",
+    upsample_temp=1.0,
 ):
     if upsample_enabled:
-        assert image_to_upsample != '', 'Must provide path to image to upsample'
-        side_x = side_x * upsample_factor
-        side_y = side_y * upsample_factor
+        # TODO # assert image_to_upsample != '', 'Must provide path to image to upsample'
+        image_to_upsample = choice(glob("/opt/afiaka87/datasets/COCO/train2017/*.jpg"))
+        prompt = open(image_to_upsample.replace(".jpg", ".txt"), 'r').readlines()[0].strip()
+        guidance_scale = 4
+        print("Grabbing random sample from COCO, fix this though")
+        print(f"Prompt: {prompt}")
+        print(f"Image to upsample: {image_to_upsample}")
+        print(f"Upsample factor: {upsample_factor}")
+        print(f"Upsample temp: {upsample_temp}")
 
     glide_model.del_cache()
     eval_diffusion = create_gaussian_diffusion(
@@ -132,22 +130,34 @@ def sample(
         tokens, glide_options["text_ctx"]
     )
 
-    # Create the classifier-free guidance tokens (empty)
-    full_batch_size = batch_size * 2
-    if len(cond_text) > 0: uncond_tokens, uncond_mask = add_cond_to_uncond(glide_model.tokenizer, cond_text)
-    else: uncond_tokens, uncond_mask = glide_model.tokenizer.padded_tokens_and_mask( [], glide_options["text_ctx"])
 
     # Pack the tokens together into model kwargs.
-    model_kwargs = dict(
-        tokens=th.tensor(
-            [tokens] * batch_size + [uncond_tokens] * batch_size, device=device
-        ),
-        mask=th.tensor(
-            [mask] * batch_size + [uncond_mask] * batch_size,
-            dtype=th.bool,
-            device=device,
+    if upsample_enabled:
+        full_batch_size = batch_size
+        model_kwargs = dict(
+            tokens=th.tensor(
+                [tokens] * batch_size, device=device
+            ),
+            mask=th.tensor(
+                [mask] * batch_size,
+                dtype=th.bool,
+                device=device,
+            )
         )
-    )
+    else:
+        # Create the classifier-free guidance tokens (empty)
+        uncond_tokens, uncond_mask = glide_model.tokenizer.padded_tokens_and_mask( [], glide_options["text_ctx"])
+        model_kwargs = dict(
+            tokens=th.tensor(
+                [tokens] * batch_size + [uncond_tokens] * batch_size, device=device
+            ),
+            mask=th.tensor(
+                [mask] * batch_size + [uncond_mask] * batch_size,
+                dtype=th.bool,
+                device=device,
+            )
+        )
+        full_batch_size = batch_size * 2
 
     def cfg_model_fn(x_t, ts, **kwargs):
         half = x_t[: len(x_t) // 2]
@@ -170,23 +180,34 @@ def sample(
         current_prediction_pil.save("current_prediction.png")
         return th.cat([eps, rest], dim=1)
 
-    model_fn = cfg_model_fn # so we use CFG for the base model.
     if upsample_enabled:
         assert image_to_upsample != '', "You must specify a path to an image to upsample."
-        low_res_samples = read_image(image_to_upsample, size=(side_x, side_y))
-        model_kwargs['low_res'] = low_res_samples
-        noise = th.randn((batch_size, 3, side_y, side_x), device=device) * upsample_temp
-        model_kwargs['noise'] = noise
-        model_fn = glide_model # just use the base model, no need for CFG.
+        model_kwargs['low_res'] = read_image(image_to_upsample, shape=(side_x, side_y)).repeat(batch_size, 1, 1, 1).to(device)
+        up_side_y = side_y * upsample_factor
+        up_side_x = side_x * upsample_factor
+        noise = th.randn((batch_size, 3, up_side_y, up_side_x), device=device) * upsample_temp
 
-    samples = eval_diffusion.plms_sample_loop(
-        model_fn,
-        (full_batch_size, 3, side_y, side_x),  # only thing that's changed
-        device=device,
-        clip_denoised=True,
-        progress=True,
-        model_kwargs=model_kwargs,
-        cond_fn=None,
-    )[:batch_size]
-    glide_model.del_cache()
-    return samples
+        samples = eval_diffusion.ddim_sample_loop(
+            glide_model if upsample_enabled else cfg_model_fn,
+            (full_batch_size, 3, up_side_y, up_side_x),  # only thing that's changed
+            noise=noise,
+            device=device,
+            clip_denoised=True,
+            progress=True,
+            model_kwargs=model_kwargs,
+            cond_fn=None,
+        )[:batch_size]
+        glide_model.del_cache()
+        return samples, prompt
+    else:
+        samples = eval_diffusion.plms_sample_loop(
+            cfg_model_fn,
+            (full_batch_size, 3, side_y, side_x),  # only thing that's changed
+            device=device,
+            clip_denoised=True,
+            progress=True,
+            model_kwargs=model_kwargs,
+            cond_fn=None,
+        )[:batch_size]
+        glide_model.del_cache()
+        return samples, prompt

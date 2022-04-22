@@ -7,7 +7,7 @@ import PIL
 import torch as th
 from torch.utils.data import Dataset
 from torchvision import transforms as T
-from glide_finetune.glide_util import get_tokens_and_mask, get_uncond_tokens_mask, add_cond_to_uncond
+from glide_finetune.glide_util import get_tokens_and_mask, get_uncond_tokens_mask
 from glide_finetune.train_util import pil_image_to_norm_tensor
 # from glide_finetune.wds_loader import add_cond_to_uncond
 
@@ -127,8 +127,9 @@ class TextImageDataset(Dataset):
         # 20% chance to use the empty caption/unconditional
         if self.text_files is None or self.uncond_p < random():
             # You can provide a single-word caption as a sort of pseudo-caption/classification. 
-            if len(self.cond_text) > 0: tokens, mask = add_cond_to_uncond(self.tokenizer, self.cond_text)
-            else: tokens, mask = get_uncond_tokens_mask(self.tokenizer)
+            # if len(self.cond_text) > 0: tokens, mask = add_cond_to_uncond(self.tokenizer, self.cond_text)
+            # else: 
+            tokens, mask = get_uncond_tokens_mask(self.tokenizer)
         else: tokens, mask = self.get_caption(ind) # 80% chance to use the caption
 
         try:
