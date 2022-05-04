@@ -1,9 +1,11 @@
+import os
 import argparse
 import time
 
 import util
 
 import torch as th
+from torchvision.transforms import functional as TF
 from termcolor import cprint
 
 
@@ -11,12 +13,6 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--prompt", type=str, help="a caption to visualize", required=True
-    )
-    parser.add_argument(
-        "--style_prompt", type=str, help="(experimental) start from this model output when interpolating. useful with laionide-v4", default="", required=False
-    )
-    parser.add_argument(
-        "--style_guidance_scale", type=float, help="(experimental) scale the style prompt guidance", default=4.0, required=False
     )
     parser.add_argument("--batch_size", type=int, help="", default=4, required=False)
     parser.add_argument("--sr", action="store_true", help="upsample to 4x")
@@ -68,27 +64,32 @@ def parse_args():
         "--base_path",
         type=str,
         help="Path to base generator. If not specified, will be created from scratch.",
-        default='',
+        default="",
         required=False,
     )
     parser.add_argument(
         "--upsample_path",
         type=str,
         help="Path to upsampled generator. If not specified, will be created from scratch.",
-        default='',
+        default="",
+        required=False,
+    )
+    parser.add_argument(
+        "--sr_respace",
+        type=str,
+        choices=["15", "17", "25", "fast27", "30", "40", "50", "100"],
+        help="",
+        default="100",
         required=False,
     )
     return parser.parse_args()
 
 
-
 def run():
     args = parse_args()
     prompt = args.prompt
-    style_prompt = args.style_prompt
     batch_size = args.batch_size
     guidance_scale = args.guidance_scale
-    style_guidance_scale = args.style_guidance_scale
     base_x = args.base_x
     base_y = args.base_y
     respace = args.respace
@@ -98,6 +99,9 @@ def run():
     base_path = args.base_path
     upsample_path = args.upsample_path
     sr = args.sr
+    sr_respace = args.sr_respace
+    os.makedirs(os.path.join(prefix, "base"), exist_ok=True)
+    os.makedirs(os.path.join(prefix, "upsample"), exist_ok=True)
     th.manual_seed(seed)
     cprint(f"Using seed {seed}", "green")
 
@@ -108,12 +112,22 @@ def run():
     device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
     cprint(f"Selected device: {device}.", "white")
     cprint("Creating model and diffusion.", "white")
-    model, diffusion, options = util.init_model(model_path=base_path, timestep_respacing=respace, device=device, model_type="base")
+    model, diffusion, options = util.init_model(
+        model_path=base_path,
+        timestep_respacing=respace,
+        device=device,
+        model_type="base",
+    )
     model.eval()
     cprint("Done.", "green")
 
     cprint("Loading GLIDE upsampling diffusion model.", "white")
-    model_up, diffusion_up, options_up = util.init_model(model_path=upsample_path, timestep_respacing="fast27", device=device, model_type="upsample")
+    model_up, diffusion_up, options_up = util.init_model(
+        model_path=upsample_path,
+        timestep_respacing=sr_respace,
+        device=device,
+        model_type="upsample",
+    )
     model_up.eval()
     cprint("Done.", "green")
 
@@ -130,21 +144,24 @@ def run():
         side_y=base_y,
         device=device,
         sample_method="plms",
-        style_prompt=style_prompt,
-        cls_guidance_scale=style_guidance_scale
     )
+
+    for idx, x in enumerate(low_res_samples):
+        if idx % 1 == 0:
+            x_pil_img = TF.to_pil_image(x)
+            x_pil_img.save(f"{prefix}/base/{idx}.png")
+            x_pil_img.save(f"current.png")
+            cprint(f"Saved base image at timestep {idx}.", "white")
+    cprint(f"Done. Took {time.time() - current_time} seconds.", "white")
+
 
     elapsed_time = time.time() - current_time
     cprint(f"Base inference time: {elapsed_time} seconds.", "green")
 
-    output_path = util.save_images(batch=low_res_samples, caption=prompt, subdir="base", prefix=prefix)
-    cprint(f"Base generations saved to {output_path}.", "green")
-
-    sr_base_x = int(base_x * 4.0)
-    sr_base_y = int(base_y * 4.0)
-    print(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}")
-
     if sr:
+        sr_base_x = int(base_x * 4.0)
+        sr_base_y = int(base_y * 4.0)
+        cprint(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}", "white")
         cprint(
             f"Upsampling from {base_x}x{base_y} to {sr_base_x}x{sr_base_y}.", "white"
         )
@@ -160,18 +177,19 @@ def run():
             device=device,
             cond_fn=None,
             guidance_scale=guidance_scale,
-            cls_guidance_scale=style_guidance_scale,
-            sample_method="ddim",
+            sample_method="plms",
             input_images=low_res_samples.to(device),
             upsample_temp=upsample_temp,
         )
+        for idx, x in enumerate(hi_res_samples):
+            if idx % 1 == 0:
+                x_pil_img = TF.to_pil_image(x)
+                x_pil_img.save(f"{prefix}/base/{idx}.png")
+                x_pil_img.save(f"current.png")
+                cprint(f"Saved upsampled image at timestep {idx}.", "white")
+        cprint(f"Done. Took {time.time() - current_time} seconds.", "green")
         elapsed_time = time.time() - current_time
         cprint(f"SR Elapsed time: {elapsed_time} seconds.", "green")
-
-        sr_output_path = util.save_images(
-            batch=hi_res_samples, caption=prompt, subdir="sr", prefix=prefix
-        )
-        cprint(f"Check {sr_output_path} for generations.", "green")
 
 
 if __name__ == "__main__":

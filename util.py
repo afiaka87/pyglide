@@ -1,6 +1,8 @@
 import os
 import regex as re
 from typing import Tuple
+from torchvision.utils import make_grid
+from torchvision.transforms import functional as TF
 from PIL import Image
 
 import torch as th
@@ -55,7 +57,6 @@ def glide_kwargs_from_prompt(
     prompt: str,
     device: th.device,
     images_to_upsample: th.Tensor = None,
-    style_prompt: str = "",
 ) -> dict:
     tokens = glide_model.tokenizer.encode(prompt)
     tokens, mask = glide_model.tokenizer.padded_tokens_and_mask(
@@ -73,26 +74,6 @@ def glide_kwargs_from_prompt(
     uncond_tokens, uncond_mask = glide_model.tokenizer.padded_tokens_and_mask(
         [], glide_options["text_ctx"]
     )
-    if len(style_prompt) > 0:
-        cls_token = glide_model.tokenizer.encode(style_prompt)
-        cls_tokens, cls_mask = glide_model.tokenizer.padded_tokens_and_mask(
-            cls_token, glide_options["text_ctx"]
-        )
-        return dict(
-            tokens=th.tensor(
-                [tokens] * batch_size
-                + [cls_tokens] * batch_size
-                + [uncond_tokens] * batch_size,
-                device=device,
-            ),
-            mask=th.tensor(
-                [mask] * batch_size
-                + [cls_mask] * batch_size
-                + [uncond_mask] * batch_size,
-                dtype=th.bool,
-                device=device,
-            ),
-        )
     return dict(
         tokens=th.tensor(
             [tokens] * batch_size + [uncond_tokens] * batch_size, device=device
@@ -137,6 +118,12 @@ def glide_double_cfg_model_fn(model, guidance_scale, cls_guidance_scale=3) -> ca
     return double_cfg_model_fn
 
 
+# def save_sample_grid(sample, batch_size, images_per_row):
+#     final_outputs = [] for image in sample["pred_xstart"]# [:batch_size]:
+#         final_outputs.append(image.squeeze(0).add(1).div(2).clamp(0, 1))
+#     grid = make_grid(final_outputs, nrow=images_per_row)
+#     return grid
+
 def run_glide_text2im(
     model: th.nn.Module,
     diffusion: th.nn.Module,
@@ -148,11 +135,10 @@ def run_glide_text2im(
     device: th.device,
     cond_fn: callable = None,
     guidance_scale: float = 0.0,
-    cls_guidance_scale: float = 0.0,
     sample_method: str = "plms",
     input_images: th.Tensor = None,
     upsample_temp: float = 1.0,
-    style_prompt: str = "",
+    images_per_row: int = 4,
 ):
     model.del_cache()
     assert sample_method in [
@@ -161,37 +147,30 @@ def run_glide_text2im(
         "ddpm",
     ], "Invalid sample method. Must be one of plms, ddim, or ddpm."
     model_kwargs = glide_kwargs_from_prompt(
-        model, options, batch_size, prompt, device, input_images, style_prompt
+        model, options, batch_size, prompt, device, input_images
     )
     # The base model uses CFG, the upsample model does not.
     noise = None
     if input_images is not None:
         full_batch_size = batch_size
         noise = th.randn(full_batch_size, 3, side_y, side_x, device=device)
-    elif len(style_prompt) > 0:
-        full_batch_size = batch_size * 3
     else:
         full_batch_size = batch_size * 2
 
     target_shape = (full_batch_size, 3, side_y, side_x)
 
     if sample_method == "plms":
-        looper = diffusion.plms_sample_loop
+        looper = diffusion.plms_sample_loop_progressive
     elif sample_method == "ddim":
-        looper = diffusion.ddim_sample_loop
+        looper = diffusion.ddim_sample_loop_progressive
     elif sample_method == "ddpm":
-        looper = diffusion.p_sample_loop
+        looper = diffusion.p_sample_loop_progressive
     else:
         raise ValueError("Invalid sample method.")
 
-    # custom_model_fn = model if input_images is not None else glide_model_fn(model, guidance_scale, cls_guidance_scale)
     custom_model_fn = None
     if input_images is not None:
         custom_model_fn = model
-    elif len(style_prompt) > 0:
-        custom_model_fn = glide_double_cfg_model_fn(
-            model, guidance_scale, cls_guidance_scale
-        )
     else:
         custom_model_fn = glide_model_fn(model, guidance_scale)
 
@@ -204,9 +183,23 @@ def run_glide_text2im(
         progress=True,
         model_kwargs=model_kwargs,
         cond_fn=cond_fn,
-    )[:batch_size]
+    )
+    # )[:batch_size]
+
+    save_frequency = 1
+    # Gather generator for diffusion
+    os.makedirs("samples", exist_ok=True)
+    current_timestep = diffusion.num_timesteps - 1
+    for step, sample in enumerate(samples):
+        current_timestep -= 1
+        if step % save_frequency == 0 or current_timestep == -1:
+            current_output = make_grid(
+                sample["pred_xstart"][:batch_size],
+                nrow=images_per_row,
+            )
+            yield current_output
+
     model.del_cache()
-    return samples
 
 
 def caption_to_filename(caption: str) -> str:
