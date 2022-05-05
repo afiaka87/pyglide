@@ -124,6 +124,7 @@ def glide_double_cfg_model_fn(model, guidance_scale, cls_guidance_scale=3) -> ca
 #     grid = make_grid(final_outputs, nrow=images_per_row)
 #     return grid
 
+@th.inference_mode()
 def run_glide_text2im(
     model: th.nn.Module,
     diffusion: th.nn.Module,
@@ -136,9 +137,9 @@ def run_glide_text2im(
     cond_fn: callable = None,
     guidance_scale: float = 0.0,
     sample_method: str = "plms",
-    input_images: th.Tensor = None,
-    upsample_temp: float = 1.0,
-    images_per_row: int = 4,
+    images_to_upsample: th.Tensor = None,
+    init_image: th.Tensor = None,
+    skip_timesteps: int = 0,
 ):
     model.del_cache()
     assert sample_method in [
@@ -147,11 +148,11 @@ def run_glide_text2im(
         "ddpm",
     ], "Invalid sample method. Must be one of plms, ddim, or ddpm."
     model_kwargs = glide_kwargs_from_prompt(
-        model, options, batch_size, prompt, device, input_images
+        model, options, batch_size, prompt, device, images_to_upsample
     )
     # The base model uses CFG, the upsample model does not.
     noise = None
-    if input_images is not None:
+    if images_to_upsample is not None:
         full_batch_size = batch_size
         noise = th.randn(full_batch_size, 3, side_y, side_x, device=device)
     else:
@@ -159,6 +160,7 @@ def run_glide_text2im(
 
     target_shape = (full_batch_size, 3, side_y, side_x)
 
+    current_timestep = diffusion.num_timesteps - 1
     if sample_method == "plms":
         looper = diffusion.plms_sample_loop_progressive
     elif sample_method == "ddim":
@@ -169,7 +171,7 @@ def run_glide_text2im(
         raise ValueError("Invalid sample method.")
 
     custom_model_fn = None
-    if input_images is not None:
+    if images_to_upsample is not None:
         custom_model_fn = model
     else:
         custom_model_fn = glide_model_fn(model, guidance_scale)
@@ -183,21 +185,17 @@ def run_glide_text2im(
         progress=True,
         model_kwargs=model_kwargs,
         cond_fn=cond_fn,
+        init_image=init_image,
+        skip_timesteps=skip_timesteps
     )
-    # )[:batch_size]
 
     save_frequency = 1
     # Gather generator for diffusion
     os.makedirs("samples", exist_ok=True)
-    current_timestep = diffusion.num_timesteps - 1
     for step, sample in enumerate(samples):
         current_timestep -= 1
         if step % save_frequency == 0 or current_timestep == -1:
-            current_output = make_grid(
-                sample["pred_xstart"][:batch_size],
-                nrow=images_per_row,
-            )
-            yield current_output
+            yield sample["pred_xstart"][:batch_size]
 
     model.del_cache()
 
