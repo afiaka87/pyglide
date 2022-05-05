@@ -1,4 +1,4 @@
-image: "r8.im/afiaka87/laionide-v4"
+image: "r8.im/afiaka87/pixelated"
 build:
   gpu: true
 
@@ -8,7 +8,6 @@ build:
   python_version: "3.8"
 
   python_packages:
-    - "torch==1.8.0"
     - "aiohttp==3.8.1"
     - "einops==0.3.2"
     - "ftfy==6.0.3"
@@ -19,12 +18,13 @@ build:
     - "filelock==3.4.2"
     - "packaging==21.3"
     - "Pillow==8.4.0"
-    - "pytorch-lightning==1.5.7"
     - "PyYAML==6.0"
     - "regex==2021.11.10"
     - "requests==2.26.0"
     - "termcolor==1.1.0"
     - "toml==0.10.2"
+    - "torch==1.11.0"
+    - "torchvision==0.12.0"
     - "tornado==6.1"
     - "tqdm==4.62.3"
     - "typing_extensions==4.0.1"
