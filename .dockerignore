@@ -5,4 +5,5 @@ glide_outputs
 .vscode
 run.sh
 workspace.code-workspace
-__pycache__
+__pycache__cog_predictions/
+glide_outputs/
