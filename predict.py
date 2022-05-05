@@ -1,33 +1,67 @@
-from email.policy import default
-import pathlib
+import os
+import sys
+
+from tqdm import tqdm
+
+sys.path.append("glide-text2im")
+import typing
 import time
+import PIL
+from glide_text2im.model_creation import create_gaussian_diffusion
 from termcolor import cprint
 import torch as th
 import cog
 import util
-
-import sys
-
-sys.path.append("glide-text2im")
+from torchvision.utils import make_grid
+import torchvision.transforms as TF
 
 
 class Predictor(cog.BasePredictor):
     def setup(self):
-        pass
+        cprint("Creating model and diffusion.", "white")
+        device = th.device("cuda")
+        self.model, _, self.options = util.init_model(
+            model_path="pixel_glide_base_latest.pt",
+            timestep_respacing="50", # we set this after
+            device=device,
+            model_type="base",
+        )
+        self.model.eval()
+        self.model.convert_to_fp16()
+        cprint("Done.", "green")
 
+        cprint("Loading GLIDE upsampling diffusion model.", "white")
+        self.model_up, _, self.options_up = util.init_model(
+            model_path="pixel_glide_upsample_latest.pt",
+            timestep_respacing="30",
+            device=device,
+            model_type="upsample",
+        )
+        self.model_up.eval()
+        self.model_up.convert_to_fp16()
+        cprint("Done.", "green")
+
+    @th.inference_mode()
+    @th.cuda.amp.autocast()
     def predict(
         self,
         prompt: str = cog.Input(
             description="Prompt to use.",
         ),
-        style_prompt: str = cog.Input(
-            description="Additional style guidance to use. Handles any sequence of tokens, but works particularly well on the listed pretrained 'dataset tokens'.",
-            default="<pixelart>",
-            choices=["<pixelart>", "<cc12m>", "<pokemon>", "<country211>", "<pixelart>", "<openimages>", "<ffhq>", "<coco>", "<vaporwave>", "<virtualgenome>", "<imagenet>"]
+        init_image: cog.Path = cog.Input(
+            default=None,
+            description=
+            "(optional) Initial image to use for the model's prediction."),
+        init_skip_fraction: str= cog.Input(
+            default="0.0",
+            description="(must be greater than 0.0 when using an init image) Fraction of sampling steps to skip when using an init image.",
+            choices=["0.0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "1.0"],
         ),
-        batch_size: int = cog.Input(
-            description="Batch size. Number of generations to predict", ge=1, le=8, default=1
+        enable_upsample: bool = cog.Input(
+            description="(Recommended) Enable 4x prompt-aware upsampling. If disabled, only 64px model will be used. Disable if you just want the small generations from the base model for a speedup.",
+            default=True,
         ),
+        batch_size: int = cog.Input(default=4, description="Batch size.", choices=[1, 2, 3, 4, 6, 8, 12]),
         side_x: str = cog.Input(
             description="Must be multiple of 8. Going above 64 is not recommended. Actual image will be 4x larger.",
             choices=["32", "48", "64", "80", "96", "112", "128"],
@@ -38,67 +72,94 @@ class Predictor(cog.BasePredictor):
             choices=["32", "48", "64", "80", "96", "112", "128"],
             default="64",
         ),
-        upsample_stage: bool = cog.Input(
-            description="If true, uses both the base and upsample models. If false, only the (finetuned) base model is used.",
-            default=True,
-        ),
-        upsample_temp: str = cog.Input(
-            description="Upsample temperature. Consider lowering to ~0.997 for blurry images with fewer artifacts.",
-            choices=["0.996", "0.997", "0.998", "0.999", "1.0"],
-            default="0.997",
-        ),
         guidance_scale: float = cog.Input(
             description="Classifier-free guidance scale. Higher values move further away from unconditional outputs. Lower values move closer to unconditional outputs. Negative values guide towards semantically opposite classes. 4-16 is a reasonable range.",
-            default=4,
-        ),
-        style_guidance_scale: float = cog.Input(
-            description="Same as guidance scale, but applied to glide model outputs from the style prompt instead of the prompt.",
-            default=4,
+            default=6.0,
         ),
         timestep_respacing: str = cog.Input(
-            description="Number of timesteps to use for base model PLMS sampling. Usually don't need more than 50.",
-            choices=[ "15", "17", "19", "21", "23", "25", "27", "30", "35", "40", "50", "100"],
-            default="27",
+            description="Number of timesteps to use for base model PLMS sampling. Higher -> better quality, lengthier runs. Usually don't need more than 50.",
+            choices=[
+                "15",
+                "17",
+                "19",
+                "21",
+                "23",
+                "25",
+                "27",
+                "30",
+                "35",
+                "40",
+                "50",
+                "60",
+                "70",
+                "80"
+            ],
+            default="40",
         ),
         sr_timestep_respacing: str = cog.Input(
             description="Number of timesteps to use for upsample model PLMS sampling. Usually don't need more than 20.",
-            choices=["15", "17", "19", "21", "23", "25", "27"],
-            default="17",
+            choices=["15", "17", "19", "21", "23", "25", "27", "30", "35"],
+            default="27",
         ),
         seed: int = cog.Input(description="Seed for reproducibility", default=0),
-    ) -> cog.Path:
+    ) -> typing.Iterator[cog.Path]:
+        prefix = "cog_predictions"
+        os.makedirs(os.path.join(prefix, "base"), exist_ok=True)
+        os.makedirs(os.path.join(prefix, "upsample"), exist_ok=True)
         th.manual_seed(seed)
-        side_x, side_y, upsample_temp = int(side_x), int(side_y), float(upsample_temp)
+        side_x, side_y = int(side_x), int(side_y)
         device = th.device("cuda" if th.cuda.is_available() else "cpu")
-        cprint("Creating model and diffusion.", "white")
-        model, diffusion, options = util.init_model(
-            model_path="glide-ft-4x41618-fp16.pt",
-            timestep_respacing=timestep_respacing,
-            device=device,
-            model_type="base",
-        )
-        model.eval()
-        cprint("Done.", "green")
+        
+        images_per_row = batch_size
+        if batch_size >= 6:
+            images_per_row = batch_size // 2
+        if batch_size >= 10:
+            images_per_row = batch_size // 3
 
-        cprint("Loading GLIDE upsampling diffusion model.", "white")
-        model_up, diffusion_up, options_up = util.init_model(
-            model_path="coco_upsample_latest_fp16.pt",
-            timestep_respacing=sr_timestep_respacing,
-            device=device,
-            model_type="upsample",
-        )
-        model_up.eval()
-        cprint("Done.", "green")
+        init_skip_fraction = float(init_skip_fraction)
+        if init_image:
+            if init_skip_fraction == 0.0:
+                print(
+                    f"Must specify init_skip_fraction > 0.0 when using init_image."
+                )
+                print(f"Overriding init_skip_fraction to 0.5")
+                init_skip_fraction = 0.5
+            print(
+                f"Loading initial image {init_image} with init_skip_fraction: {init_skip_fraction}"
+            )
+            init = PIL.Image.open(init_image).convert('RGB')
+            init = TF.RandomResizedCrop(size=(side_x, side_y), scale=(1.0, 1.0), ratio=(1.0, 1.0), interpolation=TF.InterpolationMode.LANCZOS)(init)
+            init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0, 1)
+        else:
+            init = None
+            init_skip_fraction = 0.0
 
+
+        # Override default `diffusion` helper class to use fewer timesteps via `timestep_respacing`
+        # This is required because we initialize the model with a different number of timesteps to persist it for future runs.
+        self.diffusion = create_gaussian_diffusion(
+            steps=self.options["diffusion_steps"],
+            noise_schedule=self.options["noise_schedule"],
+            timestep_respacing=str(timestep_respacing),
+        )
+        # Override default `diffusion_up` helper class to use fewer timesteps via `sr_timestep_respacing`
+        self.diffusion_up = create_gaussian_diffusion(
+            steps=self.options_up["diffusion_steps"],
+            noise_schedule=self.options_up["noise_schedule"],
+            timestep_respacing=str(sr_timestep_respacing),
+        )
         cprint(
             f"Running base GLIDE text2im model to generate {side_x}x{side_y} samples.",
             "white",
         )
         current_time = time.time()
+        skip_timesteps = int(init_skip_fraction * int(timestep_respacing))
+        if init_image:
+            cprint(f"Skipping initial timesteps: {skip_timesteps}", "white")
         low_res_samples = util.run_glide_text2im(
-            model=model,
-            diffusion=diffusion,
-            options=options,
+            model=self.model,
+            diffusion=self.diffusion,
+            options=self.options,
             prompt=prompt,
             batch_size=batch_size,
             guidance_scale=guidance_scale,
@@ -106,42 +167,46 @@ class Predictor(cog.BasePredictor):
             side_y=side_y,
             device=device,
             sample_method="plms",
-            style_prompt=style_prompt,
-            cls_guidance_scale=style_guidance_scale,
+            init_image=init,
+            skip_timesteps=skip_timesteps,
         )
 
-        elapsed_time = time.time() - current_time
-        cprint(f"Base inference time: {elapsed_time} seconds.", "green")
+        for idx, current_tensor in enumerate(low_res_samples):
+            current_grid = make_grid(current_tensor, nrow=images_per_row)
+            current_pil_img = TF.ToPILImage()(current_grid)
+            base_output_path = os.path.join(prefix, "base", f"{idx}.png")
+            current_pil_img.save(base_output_path)
+            yield cog.Path(f"{prefix}/base/{idx}.png")
+    
+        cprint(f"Done. Took {time.time() - current_time} seconds.", "green")
 
-        low_res_pil_images = util.pred_to_pil(low_res_samples)
-        low_res_pil_images.save("/src/base_predictions.png")
-
-        sr_base_x = int(side_x * 4.0)
-        sr_base_y = int(side_y * 4.0)
-
-        if upsample_stage:
+        if enable_upsample:
+            sr_base_x = int(side_x * 4.0)
+            sr_base_y = int(side_y * 4.0)
+            cprint(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}", "white")
             cprint(
                 f"Upsampling from {side_x}x{side_y} to {sr_base_x}x{sr_base_y}.",
                 "white",
             )
             current_time = time.time()
             hi_res_samples = util.run_glide_text2im(
-                model=model_up,
-                diffusion=diffusion_up,
-                options=options_up,
+                model=self.model_up,
+                diffusion=self.diffusion_up,
+                options=self.options_up,
                 prompt=prompt,
                 batch_size=batch_size,
-                device=device,
-                upsample_temp=upsample_temp,
                 side_x=sr_base_x,
                 side_y=sr_base_y,
+                device=device,
+                cond_fn=None,
+                guidance_scale=guidance_scale,
                 sample_method="plms",
-                input_images=low_res_samples.to(device),
+                images_to_upsample=current_tensor.to(device),
             )
-            elapsed_time = time.time() - current_time
-            cprint(f"SR Elapsed time: {elapsed_time} seconds.", "green")
-
-            hi_res_pil_images = util.pred_to_pil(hi_res_samples)
-            hi_res_pil_images.save("/src/sr_predictions.png")
-            return cog.Path("/src/sr_predictions.png")
-        return cog.Path("/src/base_predictions.png")
+            for idx, current_up_tensor in enumerate(hi_res_samples):
+                current_up_grid = make_grid(current_up_tensor, nrow=images_per_row)
+                current_up_pil_img = TF.ToPILImage()(current_up_grid)
+                up_output_path = os.path.join(prefix, "upsample", f"{idx}.png")
+                current_up_pil_img.save(up_output_path)
+                yield cog.Path(f"{prefix}/upsample/{idx}.png")
+            cprint(f"Done. Took {time.time() - current_time} seconds.", "green")
