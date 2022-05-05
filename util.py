@@ -185,8 +185,6 @@ def run_glide_text2im(
         progress=True,
         model_kwargs=model_kwargs,
         cond_fn=cond_fn,
-        init_image=init_image,
-        skip_timesteps=skip_timesteps
     )
 
     save_frequency = 1

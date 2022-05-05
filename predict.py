@@ -48,15 +48,6 @@ class Predictor(cog.BasePredictor):
         prompt: str = cog.Input(
             description="Prompt to use.",
         ),
-        init_image: cog.Path = cog.Input(
-            default=None,
-            description=
-            "(optional) Initial image to use for the model's prediction."),
-        init_skip_fraction: str= cog.Input(
-            default="0.0",
-            description="(must be greater than 0.0 when using an init image) Fraction of sampling steps to skip when using an init image.",
-            choices=["0.0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "1.0"],
-        ),
         enable_upsample: bool = cog.Input(
             description="(Recommended) Enable 4x prompt-aware upsampling. If disabled, only 64px model will be used. Disable if you just want the small generations from the base model for a speedup.",
             default=True,
@@ -116,25 +107,6 @@ class Predictor(cog.BasePredictor):
         if batch_size >= 10:
             images_per_row = batch_size // 3
 
-        init_skip_fraction = float(init_skip_fraction)
-        if init_image:
-            if init_skip_fraction == 0.0:
-                print(
-                    f"Must specify init_skip_fraction > 0.0 when using init_image."
-                )
-                print(f"Overriding init_skip_fraction to 0.5")
-                init_skip_fraction = 0.5
-            print(
-                f"Loading initial image {init_image} with init_skip_fraction: {init_skip_fraction}"
-            )
-            init = PIL.Image.open(init_image).convert('RGB')
-            init = TF.RandomResizedCrop(size=(side_x, side_y), scale=(1.0, 1.0), ratio=(1.0, 1.0), interpolation=TF.InterpolationMode.LANCZOS)(init)
-            init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0, 1)
-        else:
-            init = None
-            init_skip_fraction = 0.0
-
-
         # Override default `diffusion` helper class to use fewer timesteps via `timestep_respacing`
         # This is required because we initialize the model with a different number of timesteps to persist it for future runs.
         self.diffusion = create_gaussian_diffusion(
@@ -153,9 +125,6 @@ class Predictor(cog.BasePredictor):
             "white",
         )
         current_time = time.time()
-        skip_timesteps = int(init_skip_fraction * int(timestep_respacing))
-        if init_image:
-            cprint(f"Skipping initial timesteps: {skip_timesteps}", "white")
         low_res_samples = util.run_glide_text2im(
             model=self.model,
             diffusion=self.diffusion,
@@ -167,8 +136,6 @@ class Predictor(cog.BasePredictor):
             side_y=side_y,
             device=device,
             sample_method="plms",
-            init_image=init,
-            skip_timesteps=skip_timesteps,
         )
 
         for idx, current_tensor in enumerate(low_res_samples):
